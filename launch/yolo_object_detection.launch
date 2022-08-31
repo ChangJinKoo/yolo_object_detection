@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+
+<launch>
+  <!-- files folder path -->
+  <arg name="yolo_names_path"		default="$(find yolo_object_detection)/yolo_network_config"/>
+  <arg name="yolo_cfg_path"		default="$(find yolo_object_detection)/yolo_network_config/cfg"/>
+  <arg name="yolo_weights_path"		default="$(find yolo_object_detection)/yolo_network_config/weights"/>
+
+  <!-- parameter files -->
+  <arg name="yolo_param_file"		default="$(find yolo_object_detection)/config/yolov3-tiny-custom.yaml"/>
+
+  <!-- Load parameters -->
+  <rosparam command="load" ns="yolo_object_detection" file="$(arg yolo_param_file)"/>
+
+  <!-- Start darknet and ros wrapper -->
+  <node pkg="yolo_object_detection" type="yolo_object_detection" name="yolo_object_detection" output="screen" >
+    <param name="names_path"		value="$(arg yolo_names_path)" />
+    <param name="cfg_path"			value="$(arg yolo_cfg_path)" />
+    <param name="weights_path"		value="$(arg yolo_weights_path)" />
+  </node>
+      
+</launch>
