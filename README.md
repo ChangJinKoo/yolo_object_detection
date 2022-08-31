@@ -2,8 +2,6 @@
 
 Simple object detection with [YOLOv4](https://github.com/AlexeyAB/darknet) in C++ on ROS.
 
-![Visu](visu/visu.png)
-
 ## Citing ##
 
 YOLOv4 paper: "[YOLOv4: Optimal Speed and Accuracy of Object Detection](https://arxiv.org/abs/2004.10934)"
