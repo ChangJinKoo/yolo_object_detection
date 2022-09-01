@@ -10,7 +10,7 @@ yolo_model:
 
 subscribers:
   camera_reading:
-    topic: /rear_cam/image_raw
+    topic: /preceding_truck_image
     queue_size: 1
   run_yolo_:
     topic: /run_yolo_flag

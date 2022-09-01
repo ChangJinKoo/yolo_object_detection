@@ -4,8 +4,8 @@
 #include <iostream>
 #include <fstream>
 #include <opencv2/imgproc.hpp>
-
-#include <time.h>
+#include <string>
+#include <sys/time.h>
 
 #include <ros/ros.h>
 #include <opencv2/opencv.hpp>
@@ -34,6 +34,7 @@ private:
     void imageCallback(const sensor_msgs::ImageConstPtr &msg);
     void publishInThread(std::vector<bbox_t> objects);
     void drawBoxes(cv::Mat mat_img, std::vector<bbox_t> objects);
+    void recordData(struct timeval startTime);
 
     // ROS nh, sub, pub
     ros::NodeHandle nodeHandle_;
@@ -60,6 +61,9 @@ private:
 
     int width_;
     int height_;
+
+    struct timeval startTime_;
+    double delay_ = 0.0;
 };
 
 } // namespace yolo_object_detection

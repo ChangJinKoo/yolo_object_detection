@@ -53,6 +53,8 @@ bool YoloObjectDetectionNode::readParameters(){
 }
 
 void YoloObjectDetectionNode::init(){
+  gettimeofday(&startTime_, NULL);
+
   // Initialize publisher and subscriber
   std::string imageTopicName;
   int imageQueueSize;
@@ -96,6 +98,9 @@ void YoloObjectDetectionNode::runYoloCallback(const scale_truck_control::yolo_fl
 void YoloObjectDetectionNode::imageCallback(const sensor_msgs::ImageConstPtr& msg)
 {
   if (run_yolo_){
+    struct timeval endTime;
+    static double time = 0.0;
+    static int cnt = 0;
     cv_bridge::CvImageConstPtr cv_ptr;
   
     try {
@@ -115,9 +120,18 @@ void YoloObjectDetectionNode::imageCallback(const sensor_msgs::ImageConstPtr& ms
     objects_.clear();
     if (imageStatus_) {
       objects_ = yoloDetector_->detect(camImageCopy_);
+      publishInThread(objects_);
+      
+      gettimeofday(&endTime, NULL);
+      cnt++;
+      time += ((endTime.tv_sec - msg->header.stamp.sec) * 1000.0) + ((endTime.tv_usec - msg->header.stamp.nsec) / 1000.0); //ms
+      delay_ = time / (double)cnt;
+      if (cnt > 3000){
+        time = 0.0;
+	cnt = 0;
+      }
+      recordData(startTime_);
     }
-  
-    publishInThread(objects_);
   
     if (viewImage_) {
       cv::Mat draw_img = camImageCopy_.clone();
@@ -129,6 +143,7 @@ void YoloObjectDetectionNode::imageCallback(const sensor_msgs::ImageConstPtr& ms
         cv::waitKey(waitKeyDelay_);
       }
     }
+
   }
 }
 
@@ -175,6 +190,42 @@ void YoloObjectDetectionNode::drawBoxes(cv::Mat mat_img, std::vector<bbox_t> obj
       putText(mat_img, obj_name, cv::Point2f(i.x, i.y - 16), cv::FONT_HERSHEY_COMPLEX_SMALL, 1.2, cv::Scalar(0, 0, 0), 2);
     }
   }
+}
+
+void YoloObjectDetectionNode::recordData(struct timeval startTime){
+  struct timeval currentTime;
+  char file_name[] = "YOLO_log00.csv";
+  static char file[128] = {0x00, };
+  char buf[256] = {0x00,};
+  static bool flag = false;
+  double diff_time;
+  std::ifstream read_file;
+  std::ofstream write_file;
+  std::string log_path = "/home/jetson/catkin_ws/logfiles/";
+  if(!flag){
+    for(int i = 0; i < 100; i++){
+      file_name[8] = i/10 + '0';  //ASCII
+      file_name[9] = i%10 + '0';
+      sprintf(file, "%s%s", log_path.c_str(), file_name);
+      read_file.open(file);
+      if(read_file.fail()){  //Check if the file exists
+        read_file.close();
+        write_file.open(file);
+        break;
+      }
+      read_file.close();
+    }
+    write_file << "time,yoloDelay" << std::endl; //seconds, miliseconds
+    flag = true;
+  }
+  else{
+    gettimeofday(&currentTime, NULL);
+    diff_time = ((currentTime.tv_sec - startTime.tv_sec)) + ((currentTime.tv_usec - startTime.tv_usec)/1000000.0);
+    sprintf(buf, "%.10e, %.10e", diff_time, delay_);
+    write_file.open(file, std::ios::out | std::ios::app);
+    write_file << buf << std::endl;
+  }
+  write_file.close();
 }
 
 } // namespace yolo_object_detection
