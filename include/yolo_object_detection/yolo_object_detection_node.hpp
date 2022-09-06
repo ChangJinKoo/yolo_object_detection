@@ -6,6 +6,8 @@
 #include <opencv2/imgproc.hpp>
 #include <string>
 #include <sys/time.h>
+#include <thread>
+#include <mutex>
 
 #include <ros/ros.h>
 #include <opencv2/opencv.hpp>
@@ -35,6 +37,7 @@ private:
     void publishInThread(std::vector<bbox_t> objects);
     void drawBoxes(cv::Mat mat_img, std::vector<bbox_t> objects);
     void recordData(struct timeval startTime);
+    void detectInThread();
 
     // ROS nh, sub, pub
     ros::NodeHandle nodeHandle_;
@@ -45,6 +48,9 @@ private:
 
     cv::Mat camImageCopy_;
     bool imageStatus_ = false;
+
+    std::thread detectThread_;
+    std::mutex img_mutex_;
 
     Detector *yoloDetector_; // use smart ptr instead
     std::vector<std::string> objectNames_;
@@ -64,6 +70,8 @@ private:
 
     struct timeval startTime_;
     double delay_ = 0.0;
+
+    double sec_ = 0.0, nsec_ = 0.0;
 };
 
 } // namespace yolo_object_detection

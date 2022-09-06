@@ -12,6 +12,16 @@
   <!-- Load parameters -->
   <rosparam command="load" ns="yolo_object_detection" file="$(arg yolo_param_file)"/>
 
+  <!-- Start front_cam -->
+  <node pkg="usb_cam" type="usb_cam_node" name="usb_cam" >
+    <param name="video_device" value="/dev/video0" />
+    <param name="image_width" value="640" />
+    <param name="image_height" value="480" />
+    <param name="pixel_format" value="yuyv" />
+    <param name="camera_frame_id" value="usb_cam" />
+    <param name="io_method" value="mmap" />
+  </node>
+
   <!-- Start darknet and ros wrapper -->
   <node pkg="yolo_object_detection" type="yolo_object_detection" name="yolo_object_detection" output="screen" >
     <param name="names_path"		value="$(arg yolo_names_path)" />

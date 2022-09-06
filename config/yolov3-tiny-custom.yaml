@@ -1,4 +1,4 @@
-run_yolo: false
+run_yolo: true
 
 yolo_model:
   names_file:
@@ -26,6 +26,6 @@ image:
   height: 480
 
 image_view:
-  enable_opencv: false
+  enable_opencv: true
   wait_key_delay: 1
   enable_console_output: false

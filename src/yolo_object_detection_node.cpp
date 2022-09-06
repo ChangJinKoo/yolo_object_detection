@@ -46,7 +46,7 @@ bool YoloObjectDetectionNode::readParameters(){
 
   // Load common parameters
   nodeHandle_.param("image_view/enable_opencv", viewImage_, false);
-  nodeHandle_.param("image_view/wait_key_delay", waitKeyDelay_, 3);
+  nodeHandle_.param("image_view/wait_key_delay", waitKeyDelay_, 1);
   nodeHandle_.param("image_view/enable_console_output", enableConsoleOutput_, false);
 
   return true;
@@ -64,7 +64,7 @@ void YoloObjectDetectionNode::init(){
   std::string boundingBoxTopicName;
   int boundingBoxQueueSize;
 
-  nodeHandle_.param("subscribers/camera_reading/topic", imageTopicName, std::string("/rear_cam/image_raw"));
+  nodeHandle_.param("subscribers/camera_reading/topic", imageTopicName, std::string("/preceding_truck_image"));
   nodeHandle_.param("subscribers/camera_reading/queue_size", imageQueueSize, 1);
   nodeHandle_.param("subscribers/run_yolo_/topic", runYoloTopicName, std::string("/run_yolo_flag"));
   nodeHandle_.param("subscribers/run_yolo_/queue_size", runYoloQueueSize, 1);
@@ -75,8 +75,13 @@ void YoloObjectDetectionNode::init(){
   objectNames_ = objectNames(names_);
 
   imageSubscriber_ = imageTransport_.subscribe(imageTopicName, imageQueueSize, &YoloObjectDetectionNode::imageCallback, this);
-  runYoloSubscriber_ = nodeHandle_.subscribe(runYoloTopicName, runYoloQueueSize, &YoloObjectDetectionNode::runYoloCallback, this);
+//  runYoloSubscriber_ = nodeHandle_.subscribe(runYoloTopicName, runYoloQueueSize, &YoloObjectDetectionNode::runYoloCallback, this); //use if you want to measure delay from sensor failure to yolo completion
   boundingBoxPublisher_ = nodeHandle_.advertise<yolo_object_detection::bounding_box>(boundingBoxTopicName, boundingBoxQueueSize);
+
+  cv::Mat img_for_init(width_, height_, CV_8UC3, cv::Scalar(0,0,0)); 
+  yoloDetector_->detect(img_for_init);
+
+  detectThread_ = std::thread(&YoloObjectDetectionNode::detectInThread, this);
 
 }
 
@@ -92,58 +97,71 @@ std::vector<std::string> YoloObjectDetectionNode::objectNames(std::string const 
 }
 
 void YoloObjectDetectionNode::runYoloCallback(const scale_truck_control::yolo_flag &msg){
-  if (!run_yolo_) run_yolo_ = msg.run_yolo;
+  if (!run_yolo_){
+    run_yolo_ = msg.run_yolo;
+  }
 }
 
 void YoloObjectDetectionNode::imageCallback(const sensor_msgs::ImageConstPtr& msg)
 {
-  if (run_yolo_){
-    struct timeval endTime;
-    static double time = 0.0;
-    static int cnt = 0;
-    cv_bridge::CvImageConstPtr cv_ptr;
-  
-    try {
-      cv_ptr = cv_bridge::toCvShare(msg, sensor_msgs::image_encodings::BGR8);
-    }
-    catch (cv_bridge::Exception& e) {
-      ROS_ERROR("cv_bridge exception: %s", e.what());
-      return;
-    }
-  
-    if (cv_ptr) {
-      camImageCopy_ = cv_ptr->image.clone();
-      resize(camImageCopy_, camImageCopy_, cv::Size(width_, height_));
-      imageStatus_ = true;
-    }
-  
-    objects_.clear();
-    if (imageStatus_) {
-      objects_ = yoloDetector_->detect(camImageCopy_);
-      publishInThread(objects_);
-      
-      gettimeofday(&endTime, NULL);
-      cnt++;
-      time += ((endTime.tv_sec - msg->header.stamp.sec) * 1000.0) + ((endTime.tv_usec - msg->header.stamp.nsec) / 1000.0); //ms
-      delay_ = time / (double)cnt;
-      if (cnt > 3000){
-        time = 0.0;
-	cnt = 0;
-      }
-      recordData(startTime_);
-    }
-  
-    if (viewImage_) {
-      cv::Mat draw_img = camImageCopy_.clone();
-      drawBoxes(draw_img, objects_);
-      cv::namedWindow("YOLO");
-      cv::moveWindow("YOLO", 1280,520);
-      if (!draw_img.empty()) {
-        cv::imshow("YOLO", draw_img);
-        cv::waitKey(waitKeyDelay_);
-      }
-    }
+  cv_bridge::CvImageConstPtr cv_ptr;
 
+  try {
+    cv_ptr = cv_bridge::toCvShare(msg, sensor_msgs::image_encodings::BGR8);
+  }
+  catch (cv_bridge::Exception& e) {
+    ROS_ERROR("cv_bridge exception: %s", e.what());
+    return;
+  }
+
+  if (cv_ptr) {
+    std::scoped_lock lock(img_mutex_);
+    camImageCopy_ = cv_ptr->image.clone();
+    resize(camImageCopy_, camImageCopy_, cv::Size(width_, height_));
+    sec_ = msg->header.stamp.sec;
+    nsec_ = msg->header.stamp.nsec;
+  }
+}
+
+void YoloObjectDetectionNode::detectInThread()
+{
+  struct timeval endTime;
+  static double time = 0.0;
+//  static int cnt = 0;
+
+  while(ros::ok()){
+    objects_.clear();
+    {
+      std::scoped_lock lock(img_mutex_);
+      if (!camImageCopy_.empty()) {
+        objects_ = yoloDetector_->detect(camImageCopy_);
+        publishInThread(objects_); 
+  
+//      cnt++;
+//      time += ((endTime.tv_sec - sec) * 1000.0) + ((endTime.tv_usec - nsec) / 1000.0); //ms
+//      delay_ = time / (double)cnt;
+//      if (cnt > 3000){
+//        time = 0.0;
+//        cnt = 0;
+//      }
+  
+        gettimeofday(&endTime, NULL);
+        delay_ = ((endTime.tv_sec - sec_) * 1000.0) + ((endTime.tv_usec - nsec_) / 1000.0); //ms
+      } 
+  
+      if (viewImage_) {
+        cv::Mat draw_img = camImageCopy_.clone();
+        drawBoxes(draw_img, objects_);
+        cv::namedWindow("YOLO");
+        cv::moveWindow("YOLO", 1280,520);
+        if (!draw_img.empty()) {
+          cv::imshow("YOLO", draw_img);
+          cv::waitKey(waitKeyDelay_);
+        }
+      }
+    }
+    recordData(startTime_);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
 }
 
@@ -215,13 +233,16 @@ void YoloObjectDetectionNode::recordData(struct timeval startTime){
       }
       read_file.close();
     }
-    write_file << "time,yoloDelay" << std::endl; //seconds, miliseconds
+    write_file << "time,lvReqtoYoloDelay" << std::endl; //seconds, miliseconds
     flag = true;
   }
   else{
     gettimeofday(&currentTime, NULL);
     diff_time = ((currentTime.tv_sec - startTime.tv_sec)) + ((currentTime.tv_usec - startTime.tv_usec)/1000000.0);
-    sprintf(buf, "%.10e, %.10e", diff_time, delay_);
+    {
+      std::scoped_lock lock(img_mutex_);
+      sprintf(buf, "%.10e, %.10e", diff_time, delay_);
+    }
     write_file.open(file, std::ios::out | std::ios::app);
     write_file << buf << std::endl;
   }
