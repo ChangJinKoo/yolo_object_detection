@@ -56,16 +56,20 @@ void YoloObjectDetectionNode::init(){
   gettimeofday(&startTime_, NULL);
 
   // Initialize publisher and subscriber
-  std::string imageTopicName;
-  int imageQueueSize;
+  std::string precCamTopicName;
+  int precCamQueueSize;
+  std::string frontCamTopicName;
+  int frontCamQueueSize;
   std::string runYoloTopicName;
   int runYoloQueueSize;
 
   std::string boundingBoxTopicName;
   int boundingBoxQueueSize;
 
-  nodeHandle_.param("subscribers/camera_reading/topic", imageTopicName, std::string("/preceding_truck_image"));
-  nodeHandle_.param("subscribers/camera_reading/queue_size", imageQueueSize, 1);
+  nodeHandle_.param("subscribers/prec_camera_reading/topic", precCamTopicName, std::string("/preceding_truck_image"));
+  nodeHandle_.param("subscribers/prec_camera_reading/queue_size", precCamQueueSize, 1);
+  nodeHandle_.param("subscribers/front_camera_reading/topic", frontCamTopicName, std::string("/usb_cam/image_raw"));
+  nodeHandle_.param("subscribers/front_camera_reading/queue_size", frontCamQueueSize, 1);
   nodeHandle_.param("subscribers/run_yolo_/topic", runYoloTopicName, std::string("/run_yolo_flag"));
   nodeHandle_.param("subscribers/run_yolo_/queue_size", runYoloQueueSize, 1);
   nodeHandle_.param("publishers/bounding_box/topic", boundingBoxTopicName, std::string("/yolo_object_detection/bounding_box"));
@@ -74,15 +78,15 @@ void YoloObjectDetectionNode::init(){
   yoloDetector_ = new Detector(cfg_, weights_, 0.2f/* thresh*/);
   objectNames_ = objectNames(names_);
 
-  imageSubscriber_ = imageTransport_.subscribe(imageTopicName, imageQueueSize, &YoloObjectDetectionNode::imageCallback, this);
-//  runYoloSubscriber_ = nodeHandle_.subscribe(runYoloTopicName, runYoloQueueSize, &YoloObjectDetectionNode::runYoloCallback, this); //use if you want to measure delay from sensor failure to yolo completion
+  precCamImgSubscriber_ = imageTransport_.subscribe(precCamTopicName, precCamQueueSize, &YoloObjectDetectionNode::precCamImgCallback, this);
+  frontCamImgSubscriber_ = imageTransport_.subscribe(frontCamTopicName, frontCamQueueSize, &YoloObjectDetectionNode::frontCamImgCallback, this);
+  runYoloSubscriber_ = nodeHandle_.subscribe(runYoloTopicName, runYoloQueueSize, &YoloObjectDetectionNode::runYoloCallback, this); 
   boundingBoxPublisher_ = nodeHandle_.advertise<yolo_object_detection::bounding_box>(boundingBoxTopicName, boundingBoxQueueSize);
 
   cv::Mat img_for_init(width_, height_, CV_8UC3, cv::Scalar(0,0,0)); 
   yoloDetector_->detect(img_for_init);
 
   detectThread_ = std::thread(&YoloObjectDetectionNode::detectInThread, this);
-
 }
 
 std::vector<std::string> YoloObjectDetectionNode::objectNames(std::string const filename)
@@ -102,24 +106,47 @@ void YoloObjectDetectionNode::runYoloCallback(const scale_truck_control::yolo_fl
   }
 }
 
-void YoloObjectDetectionNode::imageCallback(const sensor_msgs::ImageConstPtr& msg)
+void YoloObjectDetectionNode::precCamImgCallback(const sensor_msgs::ImageConstPtr& msg)
 {
-  cv_bridge::CvImageConstPtr cv_ptr;
-
-  try {
-    cv_ptr = cv_bridge::toCvShare(msg, sensor_msgs::image_encodings::BGR8);
+  if (run_yolo_){
+    cv_bridge::CvImageConstPtr cv_ptr;
+  
+    try {
+      cv_ptr = cv_bridge::toCvShare(msg, sensor_msgs::image_encodings::BGR8);
+    }
+    catch (cv_bridge::Exception& e) {
+      ROS_ERROR("cv_bridge exception: %s", e.what());
+      return;
+    }
+  
+    if (cv_ptr) {
+      std::scoped_lock lock(prec_cam_mutex_);
+      precCamImageCopy_ = cv_ptr->image.clone();
+      resize(precCamImageCopy_, precCamImageCopy_, cv::Size(width_, height_));
+      sec_ = msg->header.stamp.sec;
+      nsec_ = msg->header.stamp.nsec;
+    }
   }
-  catch (cv_bridge::Exception& e) {
-    ROS_ERROR("cv_bridge exception: %s", e.what());
-    return;
-  }
+}
 
-  if (cv_ptr) {
-    std::scoped_lock lock(img_mutex_);
-    camImageCopy_ = cv_ptr->image.clone();
-    resize(camImageCopy_, camImageCopy_, cv::Size(width_, height_));
-    sec_ = msg->header.stamp.sec;
-    nsec_ = msg->header.stamp.nsec;
+void YoloObjectDetectionNode::frontCamImgCallback(const sensor_msgs::ImageConstPtr& msg)
+{
+  if (run_yolo_){
+    cv_bridge::CvImageConstPtr cv_ptr;
+  
+    try {
+      cv_ptr = cv_bridge::toCvShare(msg, sensor_msgs::image_encodings::BGR8);
+    }
+    catch (cv_bridge::Exception& e) {
+      ROS_ERROR("cv_bridge exception: %s", e.what());
+      return;
+    }
+  
+    if (cv_ptr) {
+      std::scoped_lock lock(front_cam_mutex_);
+      frontCamImageCopy_ = cv_ptr->image.clone();
+      resize(frontCamImageCopy_, frontCamImageCopy_, cv::Size(width_, height_));
+    }
   }
 }
 
@@ -128,44 +155,59 @@ void YoloObjectDetectionNode::detectInThread()
   struct timeval endTime;
   static double time = 0.0;
 //  static int cnt = 0;
-
+  uint8_t mark = 0;
   while(ros::ok()){
     objects_.clear();
-    {
-      std::scoped_lock lock(img_mutex_);
-      if (!camImageCopy_.empty()) {
-        objects_ = yoloDetector_->detect(camImageCopy_);
-        publishInThread(objects_); 
-  
-//      cnt++;
-//      time += ((endTime.tv_sec - sec) * 1000.0) + ((endTime.tv_usec - nsec) / 1000.0); //ms
-//      delay_ = time / (double)cnt;
-//      if (cnt > 3000){
-//        time = 0.0;
-//        cnt = 0;
-//      }
-  
-        gettimeofday(&endTime, NULL);
-        delay_ = ((endTime.tv_sec - sec_) * 1000.0) + ((endTime.tv_usec - nsec_) / 1000.0); //ms
-      } 
-  
-      if (viewImage_) {
-        cv::Mat draw_img = camImageCopy_.clone();
-        drawBoxes(draw_img, objects_);
-        cv::namedWindow("YOLO");
-        cv::moveWindow("YOLO", 1280,520);
-        if (!draw_img.empty()) {
-          cv::imshow("YOLO", draw_img);
-          cv::waitKey(waitKeyDelay_);
+    if (run_yolo_){
+      {
+        std::scoped_lock lock(prec_cam_mutex_, front_cam_mutex_);
+        std::string obj_name;
+        if (!precCamImageCopy_.empty()) {
+          objects_ = yoloDetector_->detect(precCamImageCopy_);
+//          gettimeofday(&endTime, NULL);
+//          cnt++;
+//          time += ((endTime.tv_sec - sec) * 1000.0) + ((endTime.tv_usec - nsec) / 1000.0); //ms
+//          delay_ = time / (double)cnt;
+//          if (cnt > 3000){
+//            time = 0.0;
+//            cnt = 0;
+//          }
+//          delay_ = ((endTime.tv_sec - sec_) * 1000.0) + ((endTime.tv_usec - nsec_) / 1000.0); //ms   
+          mark = 1;
+        }
+        else if (!frontCamImageCopy_.empty()) {
+          objects_ = yoloDetector_->detect(frontCamImageCopy_);
+	  mark = 2;
+        }
+
+        for(auto &i : objects_){
+          if(objectNames_.size() > i.obj_id){
+            obj_name = objectNames_[i.obj_id];
+	  }
+	}
+
+        publishInThread(objects_, obj_name);
+    
+        if (viewImage_ && mark != 0) {
+          cv::Mat draw_img;
+          if (mark == 1) draw_img = precCamImageCopy_.clone();
+	  else if (mark == 2) draw_img = frontCamImageCopy_.clone();
+          drawBoxes(draw_img, objects_);
+          cv::namedWindow("YOLO");
+          cv::moveWindow("YOLO", 1280,520);
+          if (!draw_img.empty()) {
+            cv::imshow("YOLO", draw_img);
+            cv::waitKey(waitKeyDelay_);
+          }
         }
       }
+//      recordData(startTime_);
     }
-    recordData(startTime_);
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
 }
 
-void YoloObjectDetectionNode::publishInThread(std::vector<bbox_t> objects)
+void YoloObjectDetectionNode::publishInThread(std::vector<bbox_t> objects, std::string obj_name)
 {
   yolo_object_detection::bounding_box msg;
   unsigned int max_bbox_size = 0;
@@ -178,6 +220,8 @@ void YoloObjectDetectionNode::publishInThread(std::vector<bbox_t> objects)
       bbox = i;
     }
   }
+
+  msg.name = obj_name;
   msg.x = bbox.x;
   msg.y = bbox.y;
   msg.w = bbox.w;
@@ -240,7 +284,7 @@ void YoloObjectDetectionNode::recordData(struct timeval startTime){
     gettimeofday(&currentTime, NULL);
     diff_time = ((currentTime.tv_sec - startTime.tv_sec)) + ((currentTime.tv_usec - startTime.tv_usec)/1000000.0);
     {
-      std::scoped_lock lock(img_mutex_);
+      std::scoped_lock lock(prec_cam_mutex_);
       sprintf(buf, "%.10e, %.10e", diff_time, delay_);
     }
     write_file.open(file, std::ios::out | std::ios::app);

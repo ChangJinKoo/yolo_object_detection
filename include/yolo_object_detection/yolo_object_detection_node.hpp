@@ -8,6 +8,7 @@
 #include <sys/time.h>
 #include <thread>
 #include <mutex>
+#include <string>
 
 #include <ros/ros.h>
 #include <opencv2/opencv.hpp>
@@ -33,8 +34,9 @@ private:
     void init();
     static std::vector<std::string> objectNames(std::string const filename);
     void runYoloCallback(const scale_truck_control::yolo_flag &msg);
-    void imageCallback(const sensor_msgs::ImageConstPtr &msg);
-    void publishInThread(std::vector<bbox_t> objects);
+    void precCamImgCallback(const sensor_msgs::ImageConstPtr &msg);
+    void frontCamImgCallback(const sensor_msgs::ImageConstPtr &msg);
+    void publishInThread(std::vector<bbox_t> objects, std::string obj_name);
     void drawBoxes(cv::Mat mat_img, std::vector<bbox_t> objects);
     void recordData(struct timeval startTime);
     void detectInThread();
@@ -42,15 +44,17 @@ private:
     // ROS nh, sub, pub
     ros::NodeHandle nodeHandle_;
     image_transport::ImageTransport imageTransport_;
-    image_transport::Subscriber imageSubscriber_;
+    image_transport::Subscriber precCamImgSubscriber_;
+    image_transport::Subscriber frontCamImgSubscriber_;
     ros::Subscriber runYoloSubscriber_;
     ros::Publisher boundingBoxPublisher_;
 
-    cv::Mat camImageCopy_;
+    cv::Mat precCamImageCopy_;
+    cv::Mat frontCamImageCopy_;
     bool imageStatus_ = false;
 
     std::thread detectThread_;
-    std::mutex img_mutex_;
+    std::mutex prec_cam_mutex_, front_cam_mutex_;
 
     Detector *yoloDetector_; // use smart ptr instead
     std::vector<std::string> objectNames_;

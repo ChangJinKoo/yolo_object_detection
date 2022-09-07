@@ -4,13 +4,16 @@ yolo_model:
   names_file:
     name: obj.names
   cfg_file:
-    name: yolov3-tiny-custom.cfg
-  weight_file:
-    name: yolov3-tiny-custom_7000.weights
+    name: yolov3-tiny-scale_truck.cfg
+  weights_file:
+    name: yolov3-tiny-scale_truck.weights
 
 subscribers:
-  camera_reading:
+  prec_camera_reading:
     topic: /preceding_truck_image
+    queue_size: 1
+  front_camera_reading:
+    topic: /usb_cam/image_raw
     queue_size: 1
   run_yolo_:
     topic: /run_yolo_flag
