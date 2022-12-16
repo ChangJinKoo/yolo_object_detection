@@ -31,12 +31,12 @@ bool YoloObjectDetectionNode::readParameters(){
   names_ = names_path + "/" + names_file;
 
   // Path to cfg file
-  nodeHandle_.param("yolo_model/cfg_file/name", cfg_file, std::string("yolov3-tiny-custom.cfg"));
+  nodeHandle_.param("yolo_model/cfg_file/name", cfg_file, std::string("yolov3-tiny-scale_truck.cfg"));
   nodeHandle_.param("cfg_path", cfg_path, std::string("/default"));
   cfg_ = cfg_path + "/" + cfg_file;
 
   // Path to weights file
-  nodeHandle_.param("yolo_model/weights_file/name", weights_file, std::string("yolov3-tiny-tractor.weights"));
+  nodeHandle_.param("yolo_model/weights_file/name", weights_file, std::string("yolov3-tiny-scale_truck.weights"));
   nodeHandle_.param("weights_path", weights_path, std::string("/default"));
   weights_ = weights_path + "/" + weights_file;
 
